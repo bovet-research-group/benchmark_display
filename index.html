@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bovet Research Group — Benchmarks</title>
+  <style>
+    :root {
+      --bg: #f6f8fa;
+      --card-bg: #ffffff;
+      --text: #1f2328;
+      --muted: #636c76;
+      --border: #d1d9e0;
+      --accent: #0969da;
+      --pending: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --card-bg: #161b22;
+        --text: #e6edf3;
+        --muted: #8d96a0;
+        --border: #30363d;
+        --accent: #4493f8;
+        --pending: #d29922;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+    h1 { margin: 0 0 0.5rem; font-size: 1.8rem; }
+    p.subtitle { margin: 0 0 2.5rem; color: var(--muted); }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.25rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      transition: border-color 0.15s ease;
+    }
+    .card.published:hover { border-color: var(--accent); }
+    .card h2 { margin: 0; font-size: 1.15rem; }
+    .card h2 a { color: var(--accent); text-decoration: none; }
+    .card h2 a:hover { text-decoration: underline; }
+    .card .description { color: var(--muted); font-size: 0.92rem; flex: 1; }
+    .card .meta { font-size: 0.82rem; color: var(--muted); }
+    .card .badge {
+      align-self: flex-start;
+      font-size: 0.75rem;
+      padding: 0.1rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+    .card.published .badge { color: var(--accent); border-color: var(--accent); }
+    .card.pending .badge { color: var(--pending); border-color: var(--pending); }
+    .card.pending { opacity: 0.75; }
+    footer {
+      margin-top: 3rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    footer a { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Benchmarks</h1>
+    <p class="subtitle">
+      Performance histories of the Bovet research group packages, tracked
+      with <a href="https://asv.readthedocs.io/">airspeed velocity</a>.
+    </p>
+    <div class="cards" id="cards">
+      <noscript>JavaScript is required to display the benchmark cards.</noscript>
+    </div>
+    <footer id="footer"></footer>
+  </main>
+  <script>
+    function fmtDate(iso) {
+      if (!iso) return "unknown";
+      const d = new Date(iso);
+      return isNaN(d) ? "unknown" : d.toLocaleDateString(undefined, {
+        year: "numeric", month: "short", day: "numeric",
+      });
+    }
+
+    fetch("meta.json")
+      .then((r) => r.json())
+      .then((meta) => {
+        const cards = document.getElementById("cards");
+        for (const item of meta.repos) {
+          const published = item.status === "published";
+          const card = document.createElement("div");
+          card.className = "card " + item.status;
+
+          const repoUrl = `https://github.com/${meta.org}/${item.repo}`;
+          const title = published
+            ? `<a href="${item.repo}/">${item.repo}</a>`
+            : `<a href="${repoUrl}">${item.repo}</a>`;
+          const badge = published
+            ? "benchmark report"
+            : "benchmarks not yet available";
+          const lastUpdate = item.last_commit
+            ? `last update: ${fmtDate(item.last_commit)}`
+            : "";
+
+          card.innerHTML = `
+            <h2>${title}</h2>
+            <span class="badge">${badge}</span>
+            <div class="description">${item.description || ""}</div>
+            <div class="meta">${lastUpdate}</div>
+          `;
+          cards.appendChild(card);
+        }
+        document.getElementById("footer").innerHTML =
+          `Site generated ${fmtDate(meta.generated)} · tracked branch: ` +
+          `<code>${meta.branch}</code> · results are committed in each ` +
+          `package repository and re-published daily when new commits land.`;
+      })
+      .catch(() => {
+        document.getElementById("cards").textContent =
+          "Could not load meta.json.";
+      });
+  </script>
+</body>
+</html>

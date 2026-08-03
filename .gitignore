@@ -1,0 +1,3 @@
+# build artifacts produced by the publish workflow (or local dry runs)
+site/
+work/

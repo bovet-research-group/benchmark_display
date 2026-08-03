@@ -1,0 +1,130 @@
+name: Publish benchmark reports
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild the site even if no repository has new commits"
+        type: boolean
+        default: false
+
+env:
+  ORG: bovet-research-group
+  REPOS: "temporal-networks stochmat flow_stability"
+  TRACKED_BRANCH: main
+
+permissions:
+  contents: write # to update state/last-shas.json
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publish-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      shas: ${{ steps.compare.outputs.shas }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare remote SHAs against last published state
+        id: compare
+        run: |
+          changed=false
+          shas="{"
+          sep=""
+          for repo in $REPOS; do
+            sha=$(git ls-remote "https://github.com/$ORG/$repo.git" "refs/heads/$TRACKED_BRANCH" | cut -f1)
+            last=$(jq -r --arg r "$repo" '.[$r] // empty' state/last-shas.json)
+            echo "$repo: remote=$sha last=$last"
+            if [ -n "$sha" ] && [ "$sha" != "$last" ]; then
+              changed=true
+            fi
+            shas="$shas$sep\"$repo\": \"$sha\""
+            sep=", "
+          done
+          shas="$shas}"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "shas=$shas" >> "$GITHUB_OUTPUT"
+
+  build-and-deploy:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install asv
+        run: |
+          pip install --upgrade pip
+          pip install "asv>=0.6.4"
+
+      - name: Publish per-repository reports
+        run: |
+          mkdir -p site
+          meta="["
+          sep=""
+          for repo in $REPOS; do
+            echo "==> $repo"
+            status="pending"
+            description=""
+            last_commit=""
+            # full history: asv publish needs it to order commits
+            if git clone --branch "$TRACKED_BRANCH" \
+                "https://github.com/$ORG/$repo.git" "work/$repo"; then
+              last_commit=$(git -C "work/$repo" log -1 --format=%cI)
+              description=$(python3 -c 'import tomllib, pathlib, sys; p = pathlib.Path(sys.argv[1]); print(tomllib.loads(p.read_text()).get("project", {}).get("description", "") if p.exists() else "")' "work/$repo/pyproject.toml" || true)
+              if [ ! -f "work/$repo/asv.conf.json" ]; then
+                echo "no asv.conf.json -> skipping"
+              elif [ -z "$(ls -A "work/$repo/.asv/results" 2>/dev/null)" ]; then
+                echo "no committed results -> skipping"
+              else
+                (cd "work/$repo" && asv publish --no-pull -o "$GITHUB_WORKSPACE/site/$repo")
+                status="published"
+              fi
+            else
+              echo "clone failed -> skipping"
+            fi
+            meta="$meta$sep{\"repo\": \"$repo\", \"status\": \"$status\", \"description\": $(jq -Rn --arg d "$description" '$d'), \"last_commit\": \"$last_commit\"}"
+            sep=", "
+          done
+          meta="$meta]"
+          jq -n --argjson repos "$meta" \
+            '{generated: (now | todate), org: env.ORG, branch: env.TRACKED_BRANCH, repos: $repos}' \
+            > site/meta.json
+          cp index.html site/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Update last published state
+        run: |
+          echo '${{ needs.check.outputs.shas }}' | jq . > state/last-shas.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/last-shas.json
+          git diff --cached --quiet || \
+            git commit -m "Update last published SHAs [skip ci]"
+          git push
